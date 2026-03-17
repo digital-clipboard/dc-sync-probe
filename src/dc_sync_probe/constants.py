@@ -68,8 +68,9 @@ REPEATER_SECTION_MAP: dict[str, str] = {
     "Protections": "protections",
 }
 
-# Fields to skip when comparing simple card data
-SKIP_SIMPLE_CARD_FIELDS = {"id", "dirty", "hasData", "notApplicable"}
+# Fields to skip when diffing/comparing simple card data
+# correspondenceAddress is never synced (spec: diffEngine filters it)
+SKIP_SIMPLE_CARD_FIELDS = {"id", "dirty", "hasData", "notApplicable", "correspondenceAddress"}
 
 # Fields to skip when comparing repeater items
 SKIP_REPEATER_FIELDS = {

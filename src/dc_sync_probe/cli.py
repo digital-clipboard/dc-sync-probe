@@ -82,6 +82,10 @@ def _run_pipeline(session: Session, search_term: str, dump: Path | None) -> None
     meeting_id = source["meetingId"]
     swift1 = source["sfAccountId"]
     swift2 = source.get("sfAccountId2") or ""
+    console.print(f"  Meeting ID : [bold]{meeting_id}[/bold]")
+    console.print(f"  Swift1     : [bold]{swift1}[/bold]")
+    if swift2:
+        console.print(f"  Swift2     : [bold]{swift2}[/bold]")
     _dump_json(dump, "01_source_dcjson.json", source_dcjson)
 
     # Pull a "fresh" meeting (same SF accounts → same meeting in SF)
@@ -353,7 +357,10 @@ def _run_sync_file(
     swift1 = source["sfAccountId"]
     swift2 = source.get("sfAccountId2") or ""
     _dump_json(dump, "01_fresh_dcjson.json", fresh_dcjson)
-    console.print(f"  Meeting ID: [bold]{meeting_id}[/bold]")
+    console.print(f"  Meeting ID : [bold]{meeting_id}[/bold]")
+    console.print(f"  Swift1     : [bold]{swift1}[/bold]")
+    if swift2:
+        console.print(f"  Swift2     : [bold]{swift2}[/bold]")
 
     # Log what the fresh meeting has
     for card in ("Assets", "Liabilities", "Pensions", "Protections", "Family"):
@@ -444,7 +451,40 @@ def _run_sync_file(
         console.print("\n[yellow]No changes generated — nothing to sync.[/yellow]")
         return
 
-    console.print("\n[bold yellow]Step 3 complete. Stopping here for inspection.[/bold yellow]")
+    # ── Step 4: Sync ──────────────────────────────────────────────────
+    console.print(Panel("[bold]Step 4: Sync Changes[/bold]"))
+
+    create_result = sync_create_changes(
+        session, meeting_id, creates, fresh_dcjson, sanitized,
+    )
+    _dump_json(dump, "05_create_result.json", create_result)
+    if not create_result["success"]:
+        console.print(f"[bold red]CREATE sync failed:[/bold red] {create_result['message']}")
+        return
+    console.print(f"  [green]CREATE sync OK[/green]: {create_result['message']}")
+
+    update_result = sync_update_changes(
+        session, meeting_id, updates, fresh_dcjson, sanitized,
+    )
+    _dump_json(dump, "06_update_result.json", update_result)
+    if not update_result["success"]:
+        console.print(f"[bold red]UPDATE sync failed:[/bold red] {update_result['message']}")
+        return
+    console.print(f"  [green]UPDATE sync OK[/green]: {update_result['message']}")
+
+    if not do_verify:
+        return
+
+    # ── Step 5: Verify ────────────────────────────────────────────────
+    console.print(Panel("[bold]Step 5: Verify[/bold]"))
+    console.print("Re-pulling meeting from Salesforce…")
+    verify_pull = pull_meeting(session, swift1, swift2, meeting_id)
+    verify_dcjson = transform_dcjson(verify_pull["DCJSON"])
+    _dump_json(dump, "07_verify_dcjson.json", verify_dcjson)
+
+    report = verify(sanitized, verify_dcjson)
+    _dump_json(dump, "08_verification_report.json", report)
+    print_report(report)
 
 
 def main() -> None:

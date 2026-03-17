@@ -22,6 +22,9 @@ _SKIP_COMPARE = SKIP_SIMPLE_CARD_FIELDS | {
     "fullName",
     "correspondenceAddress",
     "isThisYourCorrespondenceAddress",
+    # Local UUID cross-references: remapped during sanitization, not synced to SF
+    "poaInfoId",
+    "poaAttorneyId",
 }
 
 # PII fields that were replaced with synthetic values — skip in comparison

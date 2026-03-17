@@ -79,7 +79,7 @@ def _send_changes(
     }
 
     try:
-        data = graphql(session, mutation, variables=variables, timeout=60.0)
+        data = graphql(session, mutation, variables=variables, timeout=600.0)
     except TransportError:
         raise
     except Exception as exc:

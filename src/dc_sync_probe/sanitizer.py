@@ -7,7 +7,6 @@ from copy import deepcopy
 from typing import Any
 
 from .constants import (
-    ALL_CARD_TYPES,
     INCOME_EXPENSES_SECTIONS,
     REPEATER_SECTION_MAP,
     SIMPLE_CARDS,
@@ -59,6 +58,7 @@ _STRIP_FIELDS = {
     "swiftId",
     "originalObject",
     "readOnly",
+    "isAutomated",
 }
 
 # ---------------------------------------------------------------------------
@@ -305,6 +305,12 @@ def sanitize(
     _strip_repeater_metadata(dcjson)
     _replace_simple_card_sf(dcjson, fresh_dcjson)
     _reset_will_arrangements_poa_state(dcjson)
+
+    # Copy top-level identifiers from fresh meeting so the backend resolves
+    # the correct SF client accounts (meta.Client*.SwiftId, Client1Id, etc.)
+    for key in ("id", "Client1Id", "Client2Id", "meta"):
+        if key in fresh_dcjson:
+            dcjson[key] = deepcopy(fresh_dcjson[key])
 
     if return_id_map:
         return dcjson, id_map
