@@ -8,6 +8,8 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from rich.console import Console
+
 from .change_generator import (
     create_repeater_create_changes,
     create_repeater_update_change,
@@ -27,6 +29,24 @@ from .constants import (
 )
 from .mandatory import has_mandatory_fields_filled
 from .sobject_resolver import is_joint_item, needs_create
+
+_console = Console()
+
+# ---------------------------------------------------------------------------
+# Automated item detection
+# ---------------------------------------------------------------------------
+
+def _should_skip_create(item: dict) -> str | None:
+    """Check if an item should be skipped for CREATE. Returns reason or None."""
+    if item.get("isAutomated"):
+        return f"automated (isAutomated=True)"
+    sf_type = item.get("sfType", "")
+    if isinstance(sf_type, str) and sf_type.endswith("_AUTOMATE"):
+        return f"automated (sfType={sf_type})"
+    if item.get("category") == "Unknown Category":
+        return "Unknown Category (no SF record type mapping)"
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Value comparison helpers
@@ -185,6 +205,13 @@ def diff_repeater_card(
             orig = orig_by_id.get(cur["id"])
 
             if not orig or needs_create(cur):
+                skip_reason = _should_skip_create(cur)
+                if skip_reason:
+                    _console.print(
+                        f"  [dim]Skipping CREATE "
+                        f"{card_name}.{client}: {skip_reason}[/dim]"
+                    )
+                    continue
                 if not has_mandatory_fields_filled(cur, card_name, is_two_client):
                     continue
                 creates.extend(create_repeater_create_changes(
@@ -252,6 +279,23 @@ def diff_income_expenses(
                 orig = orig_by_id.get(cur["id"])
 
                 if not orig or needs_create(cur):
+                    if section in ("emergencyFunding", "employment"):
+                        _console.print(
+                            f"  [dim]Skipping CREATE "
+                            f"IncomeExpenses.{client}.{section}: "
+                            f"account-backed (UPDATE-only)[/dim]"
+                        )
+                        continue
+
+                    skip_reason = _should_skip_create(cur)
+                    if skip_reason:
+                        _console.print(
+                            f"  [dim]Skipping CREATE "
+                            f"IncomeExpenses.{client}.{section}: "
+                            f"{skip_reason}[/dim]"
+                        )
+                        continue
+
                     if not has_mandatory_fields_filled(cur, card, is_two_client):
                         continue
 

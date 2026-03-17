@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-ENVIRONMENTS: dict[str, dict[str, str]] = {
+_ENV_DEFS: dict[str, dict[str, str]] = {
     "local": {
         "api_url": "http://localhost:3000",
         "graphql_url": "http://localhost:3000/graphql",
@@ -11,26 +11,32 @@ ENVIRONMENTS: dict[str, dict[str, str]] = {
         "api_url": "https://backend.dev.sjp.digitalclipboard.com",
         "graphql_url": "https://backend.dev.sjp.digitalclipboard.com/graphql",
     },
-    "feature": {
-        "api_url": "https://backend.feature.digitalclipboard.com",
-        "graphql_url": "https://backend.feature.digitalclipboard.com/graphql",
-    },
-    "staging": {
+    "uat": {
         "api_url": "https://backend.uat.sjp.digitalclipboard.com",
         "graphql_url": "https://backend.uat.sjp.digitalclipboard.com/graphql",
     },
-    "dc_prod": {
+    "dc-prod": {
         "api_url": "https://backend.digitalclipboard.com",
         "graphql_url": "https://backend.digitalclipboard.com/graphql",
     },
-    "sjp_uat": {
+    "sjp-uat": {
         "api_url": "https://nlb-dcservicesuat.sjp.co.uk",
         "graphql_url": "https://nlb-dcservicesuat.sjp.co.uk/graphql",
     },
-    "sjp_prod": {
+    "sjp-prod": {
         "api_url": "https://nlb-dcservices.sjp.co.uk",
         "graphql_url": "https://nlb-dcservices.sjp.co.uk/graphql",
     },
+}
+
+# Aliases for backward compatibility
+ENVIRONMENTS: dict[str, dict[str, str]] = {
+    **_ENV_DEFS,
+    "feature": _ENV_DEFS["dev"],
+    "staging": _ENV_DEFS["uat"],
+    "dc_prod": _ENV_DEFS["dc-prod"],
+    "sjp_uat": _ENV_DEFS["sjp-uat"],
+    "sjp_prod": _ENV_DEFS["sjp-prod"],
 }
 
 DEFAULT_TIMEOUT = 45.0  # seconds

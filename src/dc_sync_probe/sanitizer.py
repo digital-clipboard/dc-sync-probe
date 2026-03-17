@@ -162,8 +162,11 @@ def _build_id_map(dcjson: dict[str, Any]) -> dict[str, str]:
             items = (dcjson.get(card_name) or {}).get(client, {}).get(section_name, [])
             _collect(items)
 
-    # IncomeExpenses nested sections
+    # IncomeExpenses nested sections (skip account-backed sections)
+    _ACCOUNT_BACKED = {"emergencyFunding", "employment"}
     for section in INCOME_EXPENSES_SECTIONS:
+        if section in _ACCOUNT_BACKED:
+            continue
         for client in ("Client1", "Client2"):
             items = (dcjson.get("IncomeExpenses") or {}).get(client, {}).get(section, [])
             _collect(items)
@@ -217,12 +220,47 @@ def _apply_id_map(dcjson: dict[str, Any], id_map: dict[str, str]) -> None:
 # Step 2c — strip sync metadata
 # ---------------------------------------------------------------------------
 
+def _copy_account_backed_ids(
+    dcjson: dict[str, Any], fresh: dict[str, Any],
+) -> None:
+    """Copy IDs from fresh meeting for account-backed IE sections.
+
+    emergencyFunding and employment items always exist in SF (from Account).
+    Match by owner and copy the fresh meeting's item IDs so the diff engine
+    can pair them and generate UPDATEs instead of CREATEs.
+    """
+    for section in ("emergencyFunding", "employment"):
+        for client in ("Client1", "Client2"):
+            san_items = (dcjson.get("IncomeExpenses") or {}).get(client, {}).get(section, [])
+            fresh_items = (fresh.get("IncomeExpenses") or {}).get(client, {}).get(section, [])
+            if not san_items or not fresh_items:
+                continue
+
+            # Build owner→item lookup from fresh
+            fresh_by_owner: dict[str, dict] = {}
+            for item in fresh_items:
+                owner = item.get("owner", "")
+                if owner:
+                    fresh_by_owner[owner] = item
+
+            for item in san_items:
+                owner = item.get("owner", "")
+                fresh_item = fresh_by_owner.get(owner)
+                if fresh_item:
+                    item["id"] = fresh_item["id"]
+
+
+_ACCOUNT_BACKED_SECTIONS = {"emergencyFunding", "employment"}
+
+
 def _strip_repeater_metadata(dcjson: dict[str, Any]) -> None:
     """Remove comesFrom, _SF, needsSync, etc. from all repeater items."""
 
-    def _strip_items(items: list[dict]) -> None:
+    def _strip_items(items: list[dict], keep_comes_from: bool = False) -> None:
         for item in items:
             for field in list(item.keys()):
+                if keep_comes_from and field == "comesFrom":
+                    continue
                 if field in _STRIP_FIELDS or _is_internal(field):
                     del item[field]
 
@@ -234,7 +272,7 @@ def _strip_repeater_metadata(dcjson: dict[str, Any]) -> None:
     for section in INCOME_EXPENSES_SECTIONS:
         for client in ("Client1", "Client2"):
             items = (dcjson.get("IncomeExpenses") or {}).get(client, {}).get(section, [])
-            _strip_items(items)
+            _strip_items(items, keep_comes_from=section in _ACCOUNT_BACKED_SECTIONS)
 
     poa = (dcjson.get("PowerOfAttorney") or {}).get("Client1", {})
     _strip_items(poa.get("poaInfo", []))
@@ -300,6 +338,10 @@ def sanitize(
     # 2b — remap local IDs
     id_map = _build_id_map(dcjson)
     _apply_id_map(dcjson, id_map)
+
+    # 2b-extra — for account-backed IE sections, copy IDs from fresh meeting
+    # so the diff engine matches them by ID and generates UPDATEs
+    _copy_account_backed_ids(dcjson, fresh_dcjson)
 
     # 2c — strip sync metadata + replace simple card _SF
     _strip_repeater_metadata(dcjson)

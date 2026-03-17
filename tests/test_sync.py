@@ -79,6 +79,38 @@ class TestSyncCreateChanges:
         result = sync_create_changes(_make_session(), MEETING_ID, [{"op": "create"}], {}, {})
         assert result["results"]["dc-1"]["success"] is True
 
+    @patch("dc_sync_probe.sync.graphql")
+    def test_item_failures_detected(self, mock_gql):
+        """Backend reports success but individual items failed."""
+        mock_gql.return_value = {
+            "syncCreateChanges": {
+                "success": True,
+                "message": "DONE",
+                "results": json.dumps({
+                    "dc-1": {"success": True, "_SF": {"sfId": "sf-1"}},
+                    "dc-2": {"success": False, "error": "record type missing"},
+                }),
+            },
+        }
+        result = sync_create_changes(_make_session(), MEETING_ID, [{"op": "create"}], {}, {})
+        assert result["success"] is False
+        assert len(result["item_failures"]) == 1
+        assert result["item_failures"][0]["id"] == "dc-2"
+        assert "record type missing" in result["item_failures"][0]["error"]
+
+    @patch("dc_sync_probe.sync.graphql")
+    def test_no_item_failures_when_all_succeed(self, mock_gql):
+        mock_gql.return_value = {
+            "syncCreateChanges": {
+                "success": True,
+                "message": "ok",
+                "results": {"dc-1": {"success": True}},
+            },
+        }
+        result = sync_create_changes(_make_session(), MEETING_ID, [{"op": "create"}], {}, {})
+        assert result["success"] is True
+        assert result["item_failures"] == []
+
 
 class TestSyncUpdateChanges:
     @patch("dc_sync_probe.sync.graphql")

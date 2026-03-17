@@ -98,10 +98,24 @@ def _send_changes(
         except (json.JSONDecodeError, TypeError):
             results = {}
 
+    # Inspect per-item results for failures
+    item_failures: list[dict[str, Any]] = []
+    if isinstance(results, dict):
+        for item_id, item_result in results.items():
+            if isinstance(item_result, dict) and not item_result.get("success", True):
+                item_failures.append({
+                    "id": item_id,
+                    "error": item_result.get("error", "Unknown error"),
+                })
+
+    # The backend may report top-level success even with item failures
+    actual_success = result.get("success", False) and len(item_failures) == 0
+
     return {
-        "success": result.get("success", False),
+        "success": actual_success,
         "message": result.get("message", ""),
         "results": results or {},
+        "item_failures": item_failures,
     }
 
 

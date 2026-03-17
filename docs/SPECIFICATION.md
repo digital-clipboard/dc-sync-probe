@@ -75,6 +75,10 @@ This reproduces the exact production scenario in staging where we can inspect SF
 ### Authentication
 - Authenticate against the DC backend using email/password login
 - Complete Salesforce SSO (OAuth flow with browser-based authorization)
+  - The OAuth redirect URI is fixed to `localhost:3001/oauth/salesforce` (registered in Salesforce)
+  - If the redirect port is free, capture the authorization code automatically via a temporary local server
+  - If the redirect port is occupied (e.g. premeet-advisor is running), open the browser and prompt the user to confirm once they've completed the SF login in the web app
+  - Skip the OAuth flow entirely if the session is already SF-authenticated
 - Handle session expiry and re-authentication
 - Support all backend environments (local, dev, UAT, prod, SJP UAT, SJP prod)
 
@@ -86,15 +90,30 @@ This reproduces the exact production scenario in staging where we can inspect SF
 - Detect joint meetings (two clients) from search results
 - Apply POA merge transformation after pulling (dcReact's `transformDCJSONForSnapshot`)
 
+### Meeting Compatibility Validation
+- Before any sync operation, validate that the target meeting is compatible with the source data
+- A single-client source DCJSON must not be applied to a joint meeting, and vice versa
+- For Apply Changes: the change objects' client structure must match the target meeting
+- Fail loudly with a clear error if there is a mismatch — do not attempt to sync incompatible data
+
+### Sync Error Handling
+- The backend may report `success: true` even when individual items within the batch failed (partial success)
+- The sync result must be inspected at the per-item level, not just the top-level `success` flag
+- Any individual item failure (CREATE or UPDATE) means the overall sync is a **FAIL**
+- On failure: display a summary of which items failed and why, then save the full error details to the dump directory
+- Both Clone and Apply Changes must treat sync errors the same way — fail loudly, report clearly
+- The verification step still runs after a failed sync to show the actual state of the meeting
+
 ### Dump Artifacts
 - When a dump directory is specified, save all intermediate JSON at each stage
 - Numbered files for clear ordering (01_source, 02_fresh, 03_sanitized, etc.)
-- Include verification reports
+- Include verification reports and sync error details
 
 ---
 
 ## Constraints
 
+- **No silent workarounds** — every code path must follow the specification. If something doesn't work, it must fail loudly with a clear error, not silently bypass the problem via an alternative path. Skipping items is acceptable only when explicitly specified (e.g. automated items) and must always be logged.
 - **Never send real PII to staging** — all personal information must be replaced with synthetic values before any sync operation
 - **Never set PII fields to null** — use synthetic values instead. Null breaks mandatory field validation and causes the diff engine to silently skip items.
 - **Creates before updates** — update changes may reference SF record IDs that only exist after creation
@@ -103,6 +122,7 @@ This reproduces the exact production scenario in staging where we can inspect SF
 - **Match dcReact's sync behavior** — the diff engine, change generator, and sanitizer must produce output compatible with what dcReact would produce. The backend expects change objects in a specific format.
 - **POA merge transformation** — the DCJSON pulled from SF must have PowerOfAttorney data merged into WillArrangements before diffing, matching dcReact's `transformDCJSONForSnapshot`
 - **`isAutomated` must never appear in sync payloads** — SF sets this automatically on records. If present in formData, the backend logs "Missing Mapping" errors and the sync fails.
+- **Some items cannot be created via sync** — not all DCJSON items were originally created through `syncCreateChanges`. Items that were auto-imported from SF or backed by the Account object have no creation path in the sync API. These must be skipped during CREATE (with a log explaining why) and only updated. Examples: automated financial accounts (`sfType` ending in `_AUTOMATE`), employment and emergency funding records, items with `category: "Unknown Category"`.
 
 ---
 
