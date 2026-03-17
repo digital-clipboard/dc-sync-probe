@@ -265,12 +265,15 @@ Remove SF-specific metadata so the diff engine treats every repeater item as bra
 | `swiftId` | SF-specific identifier |
 | `originalObject` | Backup of original data |
 | `readOnly` | Internal flag |
+| `isAutomated` | SF-managed field. If present in formData, the backend logs "Missing Mapping" errors and the sync fails. SF sets this automatically on records — it must never be sent in CREATE/UPDATE payloads |
 | Any `_*` prefixed field | Internal metadata convention |
 
 **For simple cards:** Replace `_SF` with `_SF` from the **fresh meeting** (contains the correct SF record IDs for the target meeting).
 
 Simple cards: `PersonalDetails`, `TaxAndResidency`, `ClientAssistance`, `Disclosure`, `WillArrangements`, `Loa`, `Health`
 Source: `~/Projects/DC/dcReact/app/services/changeSync/constants.js:13-21`
+
+**Copy top-level identifiers from fresh meeting:** After all sanitization steps, copy `id`, `Client1Id`, `Client2Id`, and `meta` from the fresh DCJSON into the sanitized DCJSON. The backend's data factories (e.g. `Account.js:getClientInfo`) use `meta.Client*.SwiftId` to resolve the correct Salesforce Account records. Without this, the sanitized DCJSON points to the source meeting's SF accounts, causing CREATE failures.
 
 ---
 
@@ -283,7 +286,7 @@ Feed the **fresh DCJSON** (as the "original" — what SF currently has) and the 
 The Python tool needs to reimplement the core diff logic from `~/Projects/DC/dcReact/app/services/changeSync/diffEngine.js`. Here's what `generateAllChanges()` does (line 844):
 
 1. **Diff simple cards** (PersonalDetails, TaxAndResidency, ClientAssistance, Disclosure, Loa, Health) — produces UPDATE changes for each field that differs
-   - Skip internal fields: `id`, `dirty`, `hasData`, `notApplicable`, any `_*` prefixed
+   - Skip internal fields: `id`, `dirty`, `hasData`, `notApplicable`, `correspondenceAddress`, any `_*` prefixed
    - WillArrangements handled separately (step 2)
    - Source: `diffSimpleCard()` at ~/Projects/DC/dcReact/app/services/changeSync/diffEngine.js
 
@@ -296,6 +299,7 @@ The Python tool needs to reimplement the core diff logic from `~/Projects/DC/dcR
    - Items without `comesFrom` → CREATE changes (with `formData` = full item)
    - Items with `comesFrom` that have changed fields → UPDATE changes
    - Items must pass `hasMandatoryFieldsFilled` or they're skipped
+   - Skip fields when comparing repeater items: `id`, `comesFrom`, `needsSync`, `hasChanges`, `swiftId`, `originalObject`, `readOnly`, `isAutomated`
    - Iterates both Client1 and Client2
    - Source: `diffRepeaterCard()` at ~/Projects/DC/dcReact/app/services/changeSync/diffEngine.js
 
@@ -400,7 +404,7 @@ mutation SyncCreateChanges(
 | `currentDCJSON` | Sanitized DCJSON (target state) |
 | `source` | `"ios"` |
 
-- Timeout: 60,000ms
+- Timeout: 600,000ms (10 minutes — real meetings with many repeater items need significantly more than the app's default 60s)
 - Source: `~/Projects/DC/dcReact/app/services/changeSync/sync.js:20-101`
 
 **Response:**
@@ -444,7 +448,7 @@ mutation SyncUpdateChanges(
 }
 ```
 
-Same variables as Step 4a but with UPDATE change objects. Timeout: 60,000ms.
+Same variables as Step 4a but with UPDATE change objects. Timeout: 600,000ms.
 
 Source: `~/Projects/DC/dcReact/app/services/changeSync/sync.js:113-179`
 
@@ -458,14 +462,16 @@ Call `getMeetingFromCuro` again (same as Phase 1b) to get the current state from
 ### Step 5b: Compare DCJSONs
 
 **Simple cards** — field-by-field:
-- Skip: `id`, `dirty`, `hasData`, `notApplicable`, `_*` prefixed, PII fields (except kept ones), auto-filtered fields
+- Skip: `id`, `dirty`, `hasData`, `notApplicable`, `correspondenceAddress`, `isThisYourCorrespondenceAddress`, `fullName`, `_*` prefixed, PII fields (except kept ones)
 - Compare remaining fields for equality
 
 **Repeater cards** — item matching by data fingerprint:
 - IDs will differ (SF assigns new ones on pull)
-- Match items by comparing non-internal, non-PII field values
+- Match items by comparing non-internal, non-PII field values (excluding `id`, `comesFrom`, `needsSync`, `hasChanges`, `swiftId`, `originalObject`, `readOnly`, `isAutomated`)
+- Also skip `poaInfoId` and `poaAttorneyId` — these are local UUID cross-references remapped during sanitization that don't survive the SF round-trip
 - Verify item counts per section
 - For each matched pair, compare all syncable fields
+- On fingerprint mismatch, output both the expected fields and the actual item fingerprints to aid debugging
 
 **Output:** structured report with matched/mismatched/skipped counts and per-field mismatch details.
 
@@ -555,7 +561,7 @@ Source: `~/Projects/DC/dcReact/app/services/curo/getData.js:6-11`
 
 5. **Network errors**: The sync functions re-throw `"Network Error"` and timeout errors (`~/Projects/DC/dcReact/app/services/changeSync/sync.js:92-93`). The test tool should catch these and report them distinctly from API-level errors.
 
-6. **Large DCJSONs**: GraphQL mutations use 60s timeout. For meetings with 50+ repeater items, monitor for timeouts. Consider batching if needed.
+6. **Large DCJSONs**: Sync mutations use 600s (10 minute) timeout. For meetings with 50+ repeater items, monitor for timeouts. Consider batching if needed.
 
 7. **Joint financial items**: Joint assets/liabilities/pensions/protections produce 2 SF objects (Account + Role) instead of 1. The sObjectResolver determines this based on `isJointItem()` check.
 
@@ -563,9 +569,63 @@ Source: `~/Projects/DC/dcReact/app/services/curo/getData.js:6-11`
 
 ---
 
+## CLI Commands
+
+### `dc-sync-probe run` — Full pipeline (phases 1-5)
+
+```bash
+dc-sync-probe run -e <env> -s "<search term>" [-d <dump-dir>]
+```
+
+Runs the complete pipeline: authenticate → search & pull meeting → sanitize → diff → sync CREATE → sync UPDATE → re-pull & verify. Interactive meeting picker if multiple results.
+
+### `dc-sync-probe sync-file` — Replay changes from file
+
+```bash
+dc-sync-probe sync-file -e <env> -s "<search term>" <changes_file.json> [-d <dump-dir>] [--no-verify]
+```
+
+Debugging command that loads a previously dumped changes file, searches for a fresh meeting, sanitizes the file's `initialDCJSON`, generates new changes via the diff engine, syncs them, and verifies. Useful for replaying and debugging specific sync scenarios without re-pulling the source meeting.
+
+### `dc-sync-probe pull` — Phase 1 only
+
+```bash
+dc-sync-probe pull -e <env> -s "<search term>"
+```
+
+### `dc-sync-probe sanitize-cmd` — Phase 2 only
+
+```bash
+dc-sync-probe sanitize-cmd <source.json> <fresh.json> [-o <output.json>]
+```
+
+### `dc-sync-probe diff` — Phase 3 only
+
+```bash
+dc-sync-probe diff <original.json> <current.json> [-m <meeting-id>]
+```
+
+### Dump directory (`--dump-dir` / `-d`)
+
+When provided, all intermediate JSON artifacts are saved for debugging:
+
+| File | Contents |
+|------|----------|
+| `01_source_dcjson.json` | Source meeting DCJSON (or `01_fresh_dcjson.json` for sync-file) |
+| `02_fresh_dcjson.json` | Fresh meeting DCJSON (target _SF values) |
+| `03_sanitized_dcjson.json` | Sanitized DCJSON after Phase 2 |
+| `04_create_changes.json` | CREATE changes from diff engine |
+| `05_update_changes.json` | UPDATE changes from diff engine |
+| `06_create_result.json` | CREATE sync mutation result |
+| `07_update_result.json` | UPDATE sync mutation result |
+| `08_verify_dcjson.json` | Re-pulled DCJSON after sync |
+| `09_verification_report.json` | Verification report (matched/mismatches/skipped) |
+
+---
+
 ## Verification Plan
 
 1. **Unit-level**: Test sanitizer (PII removal, ID remapping) with a sample DCJSON
-2. **Integration**: Run full flow against Staging environment with a known test meeting
+2. **Integration**: Run full flow against local/staging environment with a known test meeting
 3. **Verify**: Compare re-pulled DCJSON against expected state, check all non-PII fields match
 4. **Edge cases**: Empty cards, meetings with no repeater items, joint meetings with split items

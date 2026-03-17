@@ -141,9 +141,19 @@ def _compare_repeater(
             fp = _item_fingerprint(exp_item)
             act_item = act_fps.get(fp)
             if not act_item:
+                # Build a readable diff: show expected fingerprint fields vs
+                # closest actual item (by position or first unmatched)
+                exp_fields = {
+                    k: v for k, v in exp_item.items()
+                    if not _is_internal(k) and k not in SKIP_REPEATER_FIELDS and k not in _PII_FIELDS
+                }
                 mismatches.append({
                     "path": f"{card_name}.{client}.{section}",
                     "issue": f"No matching item found for fingerprint (id={exp_item.get('id', '?')[:8]}…)",
+                    "expected_fields": exp_fields,
+                    "actual_fingerprints": [
+                        _item_fingerprint(it) for it in act_items
+                    ],
                 })
                 continue
 
@@ -233,5 +243,18 @@ def print_report(report: dict[str, Any]) -> None:
 
         if len(mismatches) > 50:
             console.print(f"  … and {len(mismatches) - 50} more")
+
+        # Show detailed diff for fingerprint mismatches
+        fp_mismatches = [m for m in mismatches if "expected_fields" in m]
+        if fp_mismatches:
+            console.print("\n[bold]Fingerprint mismatch details (original vs copy):[/bold]")
+            for m in fp_mismatches:
+                console.print(f"\n  [bold]{m['path']}[/bold]  {m['issue']}")
+                console.print("  [yellow]Original (sanitized):[/yellow]")
+                for k, v in m["expected_fields"].items():
+                    console.print(f"    {k}: {v!r}")
+                console.print("  [cyan]Copy (re-pulled) fingerprints:[/cyan]")
+                for fp in m["actual_fingerprints"]:
+                    console.print(f"    {fp}")
     else:
         console.print("\n[bold green]All syncable fields match![/bold green]")

@@ -81,6 +81,7 @@ SKIP_REPEATER_FIELDS = {
     "swiftId",
     "originalObject",
     "readOnly",
+    "isAutomated",
 }
 
 # Fields to exclude from formData
