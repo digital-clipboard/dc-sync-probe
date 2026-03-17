@@ -9,5 +9,5 @@ build/
 .venv/
 venv/
 .pytest_cache/
-dump/
+dump*/
 config.local.json
